@@ -54,11 +54,11 @@ MYSELF=${0##*/}
 MYNAME=${MYSELF%.*}
 MYPID=$$
 
-GIT_DATE="$Date: 2018-02-01 21:36:12 +0100$"
+GIT_DATE="$Date: 2018-02-04 13:45:49 +0100$"
 GIT_DATE_ONLY=${GIT_DATE/: /}
 GIT_DATE_ONLY=$(cut -f 2 -d ' ' <<< $GIT_DATE)
 GIT_TIME_ONLY=$(cut -f 3 -d ' ' <<< $GIT_DATE)
-GIT_COMMIT="$Sha1: 0dd21f6$"
+GIT_COMMIT="$Sha1: 9aa8d66$"
 GIT_COMMIT_ONLY=$(cut -f 2 -d ' ' <<< $GIT_COMMIT | sed 's/\$//')
 
 GIT_CODEVERSION="$MYSELF $VERSION, $GIT_DATE_ONLY/$GIT_TIME_ONLY - $GIT_COMMIT_ONLY"
@@ -384,9 +384,9 @@ MSG_DE[$MSG_START_SERVICES_FAILED]="RBK0047E: Ein Fehler trat beim Starten von S
 MSG_STOP_SERVICES_FAILED=48
 MSG_EN[$MSG_STOP_SERVICES_FAILED]="RBK0048E: Error occured when stopping services. RC %1."
 MSG_DE[$MSG_STOP_SERVICES_FAILED]="RBK0048E: Ein Fehler trat beim Beenden von Services auf. RC %1."
-MSG_FILES_CHANGE_DURING_BACKUP=49
-MSG_EN[$MSG_FILES_CHANGE_DURING_BACKUP]="RBK0049W: Some files were changed or vanished during backup. RC %1 - ignoring change."
-MSG_DE[$MSG_FILES_CHANGE_DURING_BACKUP]="RBK0049W: Einige Dateien haben sich während des Backups geändert oder sind verschwunden. RC %1 - Änderung wird ignoriert."
+#MSG_FILES_CHANGE_DURING_BACKUP=49
+#MSG_EN[$MSG_FILES_CHANGE_DURING_BACKUP]="RBK0049W: Some files were changed or vanished during backup. RC %1 - ignoring change."
+#MSG_DE[$MSG_FILES_CHANGE_DURING_BACKUP]="RBK0049W: Einige Dateien haben sich während des Backups geändert oder sind verschwunden. RC %1 - Änderung wird ignoriert."
 MSG_RESTORING_FILE=50
 MSG_EN[$MSG_RESTORING_FILE]="RBK0050I: Restoring backup from %1."
 MSG_DE[$MSG_RESTORING_FILE]="RBK0050I: Backup wird von %1 zurückgespielt."
@@ -2920,11 +2920,6 @@ function tarBackup() {
 
 	(( $PARTITIONBASED_BACKUP )) && popd &>>$LOG_FILE
 
-	if [[ $rc -eq 1 ]]; then		# some files changed during backup or vanished during backup
-		writeToConsole $MSG_LEVEL_MINIMAL $MSG_FILES_CHANGE_DURING_BACKUP $rc
-		rc=0
-	fi
-
 	logExit  "tarBackup $rc"
 
 	return $rc
@@ -3009,13 +3004,8 @@ function rsyncBackup() { # partition number (for partition based backup)
 		executeCommand "$fakecmd"
 		rc=0
 	elif (( ! $FAKE )); then
-		executeCommand "$cmd" 23 24
+		executeCommand "$cmd"
 		rc=$?
-	fi
-
-	if [[ $rc -eq 23 || $rc -eq 24 ]]; then		# some files changed during backup or vanished during backup
-		writeToConsole $MSG_LEVEL_MINIMAL $MSG_FILES_CHANGE_DURING_BACKUP $rc
-		rc=0
 	fi
 
 	logExit  "rsyncBackup $rc"
@@ -3236,7 +3226,7 @@ function restore() {
 					if (( $PROGRESS )); then
 						cmd="pv -f $ROOT_RESTOREFILE | tar --exclude /boot ${archiveFlags} ${EXTENDED_TAR_OPTIONS} -x${verbose}${zip}f -"
 					else
-						cmd="tar --exclude /boot ${archiveFlags} -x${verbose}${zip}f ${EXTENDED_TAR_OPTIONS} \"$ROOT_RESTOREFILE\""
+						cmd="tar --exclude /boot ${archiveFlags} ${EXTENDED_TAR_OPTIONS} -x${verbose}${zip}f \"$ROOT_RESTOREFILE\""
 					fi
 					executeCommand "$cmd"
 					rc=$?
@@ -5106,6 +5096,19 @@ function mentionHelp() {
 	writeToConsole $MSG_LEVEL_MINIMAL $MSG_MENTION_HELP $MYSELF
 }
 
+# -x and -x+ enable, -x- disables flag
+# 0 -> disable, 1 -> enable
+function getEnableDisableOption() { # option
+	case "$1" in
+		-*-) echo 0;;
+		-*+|-*) echo 1;;
+		*) writeToConsole $MSG_LEVEL_MINIMAL $MSG_UNKNOWN_OPTION "$1"
+			mentionHelp
+			exitError $RC_PARAMETER_ERROR
+			;;
+	esac
+}
+
 ##### Now do your job
 
 INVOCATIONPARMS=""			# save passed opts for logging
@@ -5194,133 +5197,234 @@ SKIP_SFDISK=0
 UPDATE_MYSELF=0
 EXTENDED_TAR=0
 
-while getopts ":0159a:Ab:BcCd:D:e:E:FgG:hik:l:L:m:M:nN:o:p:Pr:R:s:St:T:u:UvVxX:yYzZ" opt; do
+PARAMS=""
 
-   case $opt in
-		0)	SKIP_SFDISK=1
-			;;
-		1)	FORCE_SFDISK=1
-			;;
-		5)  SKIP_RSYNC_CHECK=1
-			;;
-		9)	FAKE_BACKUPS=1
-			;;
-		a) 	STARTSERVICES="$OPTARG"
-			;;
-		A) 	APPEND_LOG=1
-			;;
-		b)	DD_BLOCKSIZE="$OPTARG"
-			;;
-		B)	TAR_BOOT_PARTITION_ENABLED=1
-			;;
-		c)  SKIPLOCALCHECK=$(( ! $SKIPLOCALCHECK ))
-			;;
-		C) 	CHECK_FOR_BAD_BLOCKS=1
-			;;
-		d) 	RESTORE_DEVICE="$OPTARG"
-			RESTORE=1
-			;;
-		D)	DD_PARMS="$OPTARG"
-			;;
-		e)	EMAIL="$OPTARG"
-			;;
-		E)	EMAIL_PARMS="$OPTARG"
-			;;
-		F) 	FAKE=1
-			;;
-		g)	PROGRESS=1
-			;;
-		G)	LANGUAGE="$OPTARG"
-			LANGUAGE=${LANGUAGE^^*}
-			msgVar="MSG_${LANGUAGE}"
-			if [[ -z ${!msgVar} ]]; then
-				writeToConsole $MSG_LEVEL_MINIMAL $MSG_LANGUAGE_NOT_SUPPORTED $LANGUAGE
-				exitError $RC_PARAMETER_ERROR
-			fi
-			;;
-		i)  if (( ! $IS_BETA )); then
-				USE_UUID=$(( ! $USE_UUID ))
-			fi
-			;;
-		k) 	KEEPBACKUPS="$OPTARG"
-			;;
-		l) 	LOG_LEVEL="$OPTARG"
-			;;
-		L) 	LOG_OUTPUT="$OPTARG"
-			;;
-		m) 	MSG_LEVEL="$OPTARG"
-			;;
-		M)	BACKUP_DIRECTORY_NAME="$OPTARG"
-			BACKUP_DIRECTORY_NAME=${BACKUP_DIRECTORY_NAME//[ \/\:\.\-]/_}
-			;;
-		n)  NOTIFY_UPDATE=$(( ! $NOTIFY_UPDATE ))
-			;;
-		N)  EXTENSIONS="$OPTARG"
-			;;
-		o) 	STOPSERVICES="$OPTARG"
-			;;
-       	p) 	if [[ ! -d "$OPTARG" ]]; then
-		        writeToConsole $MSG_LEVEL_MINIMAL $MSG_FILE_ARG_NOT_FOUND "$OPTARG"
-        		exitError $RC_MISSING_FILES
-	       	fi
-            BACKUPPATH="$(readlink -f "$OPTARG")"
-			;;
-		P) 	PARTITIONBASED_BACKUP=$(( ! $PARTITIONBASED_BACKUP ))
-			;;
-		r) 	if [[ ! -d "$OPTARG" && ! -f "$OPTARG" ]]; then
-				writeToConsole $MSG_LEVEL_MINIMAL $MSG_FILE_ARG_NOT_FOUND "$OPTARG"
-				exitError $RC_MISSING_FILES
-			fi
-			RESTOREFILE="$(readlink -f "$OPTARG")"
-			;;
-		R) 	ROOT_PARTITION_DEFINED=1
-			ROOT_PARTITION="$OPTARG"
-			;;
-		s)	EMAIL_PROGRAM="$OPTARG"
-			;;
-		S)	FORCE_UPDATE=1
-			;;
-		t) 	BACKUPTYPE="$OPTARG"
-			;;
-		T)	if [[ "$OPTARG" == "$PARTITIONS_TO_BACKUP_ALL" ]]; then
-				PARTITIONS_TO_BACKUP=("$OPTARG")
-			else
-				PARTITIONS_TO_BACKUP=($OPTARG)
-			fi
-			;;
-		u)	EXCLUDE_LIST="$OPTARG"
-			;;
-		U)	UPDATE_MYSELF=1
-			;;
-		v)	VERBOSE=$(( ! $VERBOSE ))
-			;;
-		V)	REVERT=1
-			;;
-		x)	EXCLUDE_DD=1
-			;;
-		X)	EXTENDED_TAR=$OPTARG
-			;;
-		y)	DEPLOY=1
-			;;
-		Y)	NO_YES_QUESTION=1
-			;;
-		z)	ZIP_BACKUP=$(( ! $ZIP_BACKUP ))
-			;;
-		Z)	REGRESSION_TEST=1
-			;;
-		h)  HELP=1
-			;;
-		\?)	writeToConsole $MSG_LEVEL_MINIMAL $MSG_UNKNOWN_OPTION "-$OPTARG"
-			mentionHelp
-			exitError $RC_PARAMETER_ERROR
-			;;
-		:) 	writeToConsole $MSG_LEVEL_MINIMAL $MSG_OPTION_REQUIRES_PARAMETER "-$OPTARG"
-			mentionHelp
-			exitError $RC_PARAMETER_ERROR
-			;;
-    esac
+while (( "$#" )); do
+
+  case "$1" in
+    -0|-0[-+])
+	  SKIP_SFDISK=$(getEnableDisableOption "$1"); shift 1
+	  ;;
+
+    -1|-1[-+])
+	  FORCE_SFDISK=$(getEnableDisableOption "$1"); shift 1
+	  ;;
+
+    -5|-5[-+])
+	  SKIP_RSYNC_CHECK=$(getEnableDisableOption "$1"); shift 1
+	  ;;
+
+    -9|-9[-+])
+	  FAKE_BACKUPS=$(getEnableDisableOption "$1"); shift 1
+	  ;;
+
+    -a)
+      STARTSERVICES="$2"; shift 2
+      ;;
+
+    -A|-A[-+])
+	  APPEND_LOG=$(getEnableDisableOption "$1"); shift 1
+	  ;;
+
+    -b)
+      DD_BLOCKSIZE="$2"; shift 2
+      ;;
+
+    -B|-B[-+])
+	  TAR_BOOT_PARTITION_ENABLED=$(getEnableDisableOption "$1"); shift 1
+	  ;;
+
+    -c|-c[-+])
+	  SKIPLOCALCHECK=$(getEnableDisableOption "$1"); shift 1
+	  ;;
+
+    -C|-C[-+])
+	  CHECK_FOR_BAD_BLOCKS=$(getEnableDisableOption "$1"); shift 1
+	  ;;
+
+    -d)
+      RESTORE_DEVICE="$2"; RESTORE=1; shift 2
+      ;;
+
+    -D)
+      DD_PARMS="$2"; shift 2
+      ;;
+
+    -e)
+      EMAIL="$2"; shift 2
+      ;;
+
+    -E)
+      EMAIL_PARMS="$2"; shift 2
+      ;;
+
+    -F|-F[-+])
+	  FAKE=$(getEnableDisableOption "$1"); shift 1
+	  ;;
+
+    -g|-g[-+])
+	  PROGRESS=$(getEnableDisableOption "$1"); shift 1
+	  ;;
+
+    -G)
+      LANGUAGE="$2"; shift 2
+  	  LANGUAGE=${LANGUAGE^^*}
+	  msgVar="MSG_${LANGUAGE}"
+	  if [[ -z ${!msgVar} ]]; then
+		  writeToConsole $MSG_LEVEL_MINIMAL $MSG_LANGUAGE_NOT_SUPPORTED $LANGUAGE
+		  exitError $RC_PARAMETER_ERROR
+	  fi
+	  ;;
+
+	-h)
+	  HELP=1; break
+	  ;;
+
+    -i|-i[-+])
+	  USE_UUID=$(getEnableDisableOption "$1"); shift 1
+	  ;;
+
+    -k)
+	  KEEPBACKUPS="$2"; shift 2
+	  ;;
+
+    -l)
+	  LOG_LEVEL="$2"; shift 2
+	  ;;
+
+    -L)
+	  LOG_OUTPUT="$2"; shift 2
+	  ;;
+
+    -m)
+	  MSG_LEVEL="$2"; shift 2
+	  ;;
+
+    -M)
+	  BACKUP_DIRECTORY_NAME="$2"; shift 2
+  	  BACKUP_DIRECTORY_NAME=${BACKUP_DIRECTORY_NAME//[ \/\:\.\-]/_}
+  	  ;;
+
+    -n|-n[-+])
+	  NOTIFY_UPDATE=$(getEnableDisableOption "$1"); shift 1
+	  ;;
+
+    -N)
+	  EXTENSIONS="$2"; shift 2
+	  ;;
+
+    -o)
+	  STOPSERVICES="$2"; shift 2
+	  ;;
+
+    -p)
+	  BACKUPPATH="$2"; shift 2
+	  if [[ ! -d "$BACKUPPATH" ]]; then
+	      writeToConsole $MSG_LEVEL_MINIMAL $MSG_FILE_ARG_NOT_FOUND "$BACKUPPATH"
+          exitError $RC_MISSING_FILES
+	  fi
+      BACKUPPATH="$(readlink -f "$BACKUPPATH")"
+	  ;;
+
+    -P|-P[-+])
+	  PARTITIONBASED_BACKUP=$(getEnableDisableOption "$1"); shift 1
+	  ;;
+
+    -r)
+	  RESTOREFILE="$2"; shift 2
+      if [[ ! -d "$RESTOREFILE" && ! -f "$RESTOREFILE" ]]; then
+		  writeToConsole $MSG_LEVEL_MINIMAL $MSG_FILE_ARG_NOT_FOUND "$RESTOREFILE"
+		  exitError $RC_MISSING_FILES
+	  fi
+	  RESTOREFILE="$(readlink -f "$OPTARG")"
+	  ;;
+
+    -R)
+	  ROOT_PARTITION="$2"; shift 2
+      ROOT_PARTITION_DEFINED=1
+  	  ;;
+
+    -s)
+	  EMAIL_PROGRAM="$2"; shift 2
+	  ;;
+
+    -S|-S[-+])
+	  FORCE_UPDATE=$(getEnableDisableOption "$1"); shift 1
+	  ;;
+
+    -t)
+	  BACKUPTYPE="$2"; shift 2
+	  ;;
+
+    -T)
+	  PARTITIONS_TO_BACKUP="$2"; shift 2
+	  if [[ "$PARTITIONS_TO_BACKUP" == "$PARTITIONS_TO_BACKUP_ALL" ]]; then
+		  PARTITIONS_TO_BACKUP=("$PARTITIONS_TO_BACKUP")
+	  else
+		  PARTITIONS_TO_BACKUP=($PARTITIONS_TO_BACKUP)
+	  fi
+	  ;;
+
+    -u)
+	  EXCLUDE_LIST="$2"; shift 2
+	  ;;
+
+    -U)
+	  UPDATE_MYSELF=1; shift 1
+	  ;;
+
+    -v|-v[-+])
+	  VERBOSE=$(getEnableDisableOption "$1"); shift 1
+	  ;;
+
+    -V)
+	  REVERT=1
+	  ;;
+
+    -x|-x[-+])
+	  EXCLUDE_DD=$(getEnableDisableOption "$1"); shift 1
+	  ;;
+
+    -X|-X[-+])
+	  EXTENDED_TAR=$(getEnableDisableOption "$1"); shift 1
+	  ;;
+
+    -y|-y[-+])
+	  DEPLOY=$(getEnableDisableOption "$1"); shift 1
+	  ;;
+
+    -Y)
+	  NO_YES_QUESTION=1; shift 1
+	  ;;
+
+    -z|-z[-+])
+	  ZIP_BACKUP=$(getEnableDisableOption "$1"); shift 1
+	  ;;
+
+    -Z|-Z[-+])
+	  REGRESSION_TEST=$(getEnableDisableOption "$1"); shift 1
+	  ;;
+
+    --) # end argument parsing
+      shift
+      break
+      ;;
+
+    -*|--*|+*|++*) # unknown option
+		writeToConsole $MSG_LEVEL_MINIMAL $MSG_UNKNOWN_OPTION "$1"
+		mentionHelp
+		exitError $RC_PARAMETER_ERROR
+      ;;
+
+    *) # preserve positional arguments
+      [[ -z $PARAMS ]] && PARAMS="$1" || PARAMS="$PARAMS $1"
+      shift
+      ;;
+  esac
 done
-shift $((OPTIND-1))
+
+# set positional arguments in argument list $@
+set -- $PARAMS
 
 writeToConsole $MSG_LEVEL_MINIMAL $MSG_STARTED "$HOSTNAME" "$MYSELF" "$VERSION" "$(date)" "$GIT_COMMIT_ONLY"
 (( $IS_BETA )) && writeToConsole $MSG_LEVEL_MINIMAL $MSG_INTRO_BETA_MESSAGE
@@ -5333,13 +5437,15 @@ if [[ $BACKUPTYPE == $BACKUPTYPE_TAR || $BACKUPTYPE == $BACKUPTYPE_TGZ ]]; then
 		exitError $RC_PARAMETER_ERROR
 	fi
 
+	logItem "tar version$NL$(dpkg -p tar)"
+
 	if [[ -f /etc/os-release ]]; then
-		debian_release=$(cat /etc/os-release | grep VERSION_ID | cut -f 2 -d "=" | sed 's/"//g')
-		debian_id_like=$(cat /etc/os-release | grep ID_LIKE | cut -f 2 -d "=")
+		debian_version_id=$(cat /etc/os-release | grep -i ^VERSION_ID | cut -f 2 -d "=" | sed 's/"//g')
+		debian_id=$(cat /etc/os-release | grep -i ^ID= | cut -f 2 -d "=")
 		# enable extended tar options for raspbian Jessie and beyond
-		if (( ! $EXTENDED_TAR )) && [[ -n $debian_release && -n $debian_id_like ]]; then
-			debian_release=$(egrep -o "^[0-9]+" <<< $debian_release)
-			if (( debian_release > 7 )) || [[ $debian_id_like == "raspbian" ]]; then
+		if (( ! $EXTENDED_TAR )) && [[ -n $debian_version_id && -n $debian_id ]]; then
+			debian_release=$(egrep -o "^[0-9]+" <<< $debian_version_id)
+			if (( debian_version_id > 7 )) || [[ $debian_id == "raspbian" ]]; then
 				logItem "Enabling extended tar handling"
 				EXTENDED_TAR=1
 			fi
@@ -5392,7 +5498,7 @@ if (( $UPDATE_MYSELF )); then
 	exitNormal
 fi
 
-if (( $NO_YES_QUESTION )); then				# dangerous option
+if (( $NO_YES_QUESTION )); then				# WARNING: dangerous option !!!
 	if [[ ! $RESTORE_DEVICE =~ "$YES_NO_RESTORE_DEVICE" ]]; then	# make sure we're not killing a disk by accident
 		writeToConsole $MSG_LEVEL_MINIMAL $MSG_YES_NO_DEVICE_MISMATCH $RESTORE_DEVICE $YES_NO_RESTORE_DEVICE
 		exitError $RC_MISC_ERROR
@@ -5450,5 +5556,3 @@ fi
 
 doit #	no return for backup
 exit $rc
-
-# vim: set expandtab tabstop=8 shiftwidth=8 autoindent smartindent
